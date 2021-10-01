@@ -51,9 +51,12 @@ class NegativeLogLikelihood(DistributionLoss):
     ) -> torch.Tensor:
         return -input.log_prob(target)
 
-
 class CRPS(DistributionLoss):
-    def forward(
-        self, input: torch.distributions.Distribution, target: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, input, target: torch.Tensor
+                ) -> torch.Tensor:
         return input.crps(target)
+
+class EnergyScore(DistributionLoss):
+    def forward(self, input, target: torch.Tensor
+                ) -> torch.Tensor:
+        return input.energy_score(target)

@@ -104,3 +104,86 @@ class DeepARLightningModule(pl.LightningModule):
             lr=self.lr,
             weight_decay=self.weight_decay,
         )
+
+
+class MultivariateDeepARLightningModule(pl.LightningModule):
+    def __init__(
+        self,
+        model: DeepARModel,
+        loss: DistributionLoss = NegativeLogLikelihood(),
+        lr: float = 1e-3,
+        weight_decay: float = 1e-8,
+    ) -> None:
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = model
+        self.loss = loss
+        self.lr = lr
+        self.weight_decay = weight_decay
+
+    def _compute_loss(self, batch):
+        feat_static_cat = batch["feat_static_cat"]
+        feat_static_real = batch["feat_static_real"]
+        past_time_feat = batch["past_time_feat"]
+        past_target = batch["past_target"]
+        future_time_feat = batch["future_time_feat"]
+        future_target = batch["future_target"]
+        past_observed_values = batch["past_observed_values"]
+        future_observed_values = batch["future_observed_values"]
+
+        params, scale, _, _ = self.model.unroll_lagged_rnn(
+            feat_static_cat,
+            feat_static_real,
+            past_time_feat,
+            past_target,
+            past_observed_values,
+            future_time_feat,
+            future_target,
+        )
+        distr = self.model.output_distribution(params, scale)
+
+        # prediction_length = future_target.shape[1]
+        context_target = past_target[:, -self.model.context_length + 1:]
+        target = torch.cat(
+            (context_target, future_target),
+            dim=1,
+        )
+
+        # target = future_target
+
+        # target = torch.cat([whole_window[:, i:i+prediction_length].unsqueeze(-2)
+        #                     for i in range(whole_window.shape[1] - prediction_length)], dim=-2)
+
+        loss_values = self.loss(distr, target)
+
+        observed_values = future_observed_values
+
+        return loss_values.mean()
+
+    def training_step(self, batch, batch_idx: int):
+        """Execute training step"""
+        train_loss = self._compute_loss(batch)
+        self.log(
+            "train_loss",
+            train_loss,
+            on_epoch=True,
+            on_step=False,
+            prog_bar=True,
+        )
+        return train_loss
+
+    def validation_step(self, batch, batch_idx: int):
+        """Execute validation step"""
+        val_loss = self._compute_loss(batch)
+        self.log(
+            "val_loss", val_loss, on_epoch=True, on_step=False, prog_bar=True
+        )
+        return val_loss
+
+    def configure_optimizers(self):
+        """Returns the optimizer to use"""
+        return torch.optim.Adam(
+            self.model.parameters(),
+            lr=self.lr,
+            weight_decay=self.weight_decay,
+        )

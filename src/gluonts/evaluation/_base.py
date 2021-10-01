@@ -48,6 +48,7 @@ from .metrics import (
     smape,
 )
 
+import torch
 
 def worker_function(evaluator: "Evaluator", inp: tuple):
     ts, forecast = inp
@@ -164,6 +165,8 @@ class Evaluator:
         chunk_size: int = 32,
         aggregation_strategy: Callable = aggregate_no_nan,
         ignore_invalid_values: bool = True,
+        n_step_ahead: List[int] = None,
+        energy_score = False,
     ) -> None:
         self.quantiles = tuple(map(Quantile.parse, quantiles))
         self.seasonality = seasonality
@@ -174,6 +177,8 @@ class Evaluator:
         self.chunk_size = chunk_size
         self.aggregation_strategy = aggregation_strategy
         self.ignore_invalid_values = ignore_invalid_values
+        self.n_step_ahead = n_step_ahead
+        self.energy_score = energy_score
 
     def __call__(
         self,
@@ -400,6 +405,41 @@ class Evaluator:
                 pred_target, forecast_quantile
             )
 
+            if self.n_step_ahead is not None:
+                for step in self.n_step_ahead:
+                    assert (
+                            isinstance(step, int) and 0 < step <= pred_target.shape[0]
+                    ), "n in n_step_ahead must be an integer and lies in (0, len(pred_target)]"
+
+                    metrics[f"{step}_step_ahead_" + quantile.loss_name] = quantile_loss(
+                        pred_target[step-1:step], forecast_quantile[step-1:step], quantile.value
+                    )
+                    # metrics[f"{step}_step_ahead_" + quantile.coverage_name] = coverage(
+                    #     pred_target[step-1:step], forecast_quantile[step-1:step]
+                    # )
+
+        if self.n_step_ahead is not None:
+            for step in self.n_step_ahead:
+                metrics[f"{step}_step_ahead_" + "abs_target_sum"] = abs_target_sum(pred_target[step-1:step])
+                metrics[f"{step}_step_ahead_" + "abs_target_mean"] = abs_target_mean(pred_target[step-1:step])
+
+        if self.energy_score:
+            samples_tensor = torch.tensor(forecast.samples)
+            target_tensor = torch.tensor(pred_target)
+            num_samples, prediction_length = samples_tensor.shape[0], samples_tensor.shape[1]
+            num_expected = num_samples//3
+            X = samples_tensor[:num_expected]
+            X_bar = samples_tensor[num_expected:num_expected*2]
+            X_prime = samples_tensor[num_expected*2:num_expected*3]
+
+            metrics['energy_score'] = (
+                    -0.5*torch.mean(torch.norm(
+                X.view(num_expected, 1, prediction_length)
+                - X_bar.view(1, num_expected, prediction_length), dim=-1
+                ))
+                + torch.mean(torch.norm(X_prime - target_tensor.view(1, prediction_length), dim=-1))
+            )
+
         return metrics
 
     def get_aggregate_metrics(
@@ -424,6 +464,18 @@ class Evaluator:
         for quantile in self.quantiles:
             agg_funs[quantile.loss_name] = "sum"
             agg_funs[quantile.coverage_name] = "mean"
+            if self.n_step_ahead is not None:
+                for step in self.n_step_ahead:
+                    agg_funs[f"{step}_step_ahead_" + quantile.loss_name] = "sum"
+                    # agg_funs[f"{step}_step_ahead_" + quantile.coverage_name] = "mean"
+
+        if self.n_step_ahead is not None:
+            for step in self.n_step_ahead:
+                agg_funs[f"{step}_step_ahead_" + "abs_target_sum"] = "sum"
+                agg_funs[f"{step}_step_ahead_" + "abs_target_mean"] = "mean"
+
+        if self.energy_score:
+            agg_funs["energy_score"] = "mean"
 
         if self.custom_eval_fn is not None:
             for k, (_, agg_type, _) in self.custom_eval_fn.items():
@@ -447,6 +499,11 @@ class Evaluator:
             totals[quantile.weighted_loss_name] = (
                 totals[quantile.loss_name] / totals["abs_target_sum"]
             )
+            if self.n_step_ahead is not None:
+                for step in self.n_step_ahead:
+                    totals[f"{step}_step_ahead_" + quantile.weighted_loss_name] = (
+                totals[f"{step}_step_ahead_" + quantile.loss_name] / totals[f"{step}_step_ahead_" + "abs_target_sum"]
+            )
 
         totals["mean_absolute_QuantileLoss"] = np.array(
             [totals[quantile.loss_name] for quantile in self.quantiles]
@@ -458,6 +515,25 @@ class Evaluator:
                 for quantile in self.quantiles
             ]
         ).mean()
+
+        if self.n_step_ahead is not None:
+            for step in self.n_step_ahead:
+                totals[f"{step}_step_ahead_" + "mean_wQuantileLoss"] = np.array(
+            [
+                totals[f"{step}_step_ahead_" + quantile.weighted_loss_name]
+                for quantile in self.quantiles
+            ]
+        ).mean()
+
+            # discarding the n_step_ahead wQuantileLoss afterward
+            for quantile in self.quantiles:
+                for step in self.n_step_ahead:
+                    totals.pop(f"{step}_step_ahead_" + quantile.weighted_loss_name)
+                    totals.pop(f"{step}_step_ahead_" + quantile.loss_name)
+
+            for step in self.n_step_ahead:
+                totals.pop(f"{step}_step_ahead_" + "abs_target_sum")
+                totals.pop(f"{step}_step_ahead_" + "abs_target_mean")
 
         totals["MAE_Coverage"] = np.mean(
             [
