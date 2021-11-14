@@ -154,7 +154,7 @@ class DeepARModel(nn.Module):
         output, new_state = self.lagged_rnn(prior_input, input, features)
 
         params = self.param_proj(output)
-        return params, scale, static_feat, new_state
+        return params, scale, output, static_feat, new_state
 
     @torch.jit.ignore
     def output_distribution(

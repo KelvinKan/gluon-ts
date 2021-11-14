@@ -28,38 +28,38 @@ class ActNorm(torch.nn.Module):
             self.scale = scale
             self.register_parameter('logs', nn.Parameter(torch.zeros(1, num_features, 1), requires_grad=True))
 
-    def forward(self, x):
-        input_shape = x.size()
-        x = x.view(input_shape[0], input_shape[1], -1)
-
-        if not self.initialized:
-            self.initialized = True
-
-            # noinspection PyShadowingNames
-            def unsqueeze(x):
-                return x.unsqueeze(0).unsqueeze(-1).detach()
-
-            # Compute the mean and variance
-            sum_size = x.size(0) * x.size(-1)
-            b = -torch.sum(x, dim=(0, -1)) / sum_size
-            self.b.data.copy_(unsqueeze(b).data)
-
-            if self.learn_scale:
-                var = unsqueeze(torch.sum((x + unsqueeze(b)) ** 2, dim=(0, -1)) / sum_size)
-                logs = torch.log(self.scale / (torch.sqrt(var) + 1e-6)) / self.logscale_factor
-                self.logs.data.copy_(logs.data)
-
-        b = self.b
-        output = x + b
-
-        if self.learn_scale:
-            logs = self.logs * self.logscale_factor
-            scale = torch.exp(logs) + _scaling_min
-            output = output * scale
-
-            return output.view(input_shape)
-        else:
-            return output.view(input_shape)
+    # def forward(self, x):
+    #     input_shape = x.size()
+    #     x = x.view(input_shape[0], input_shape[1], -1)
+    #
+    #     if not self.initialized:
+    #         self.initialized = True
+    #
+    #         # noinspection PyShadowingNames
+    #         def unsqueeze(x):
+    #             return x.unsqueeze(0).unsqueeze(-1).detach()
+    #
+    #         # Compute the mean and variance
+    #         sum_size = x.size(0) * x.size(-1)
+    #         b = -torch.sum(x, dim=(0, -1)) / sum_size
+    #         self.b.data.copy_(unsqueeze(b).data)
+    #
+    #         if self.learn_scale:
+    #             var = unsqueeze(torch.sum((x + unsqueeze(b)) ** 2, dim=(0, -1)) / sum_size)
+    #             logs = torch.log(self.scale / (torch.sqrt(var) + 1e-6)) / self.logscale_factor
+    #             self.logs.data.copy_(logs.data)
+    #
+    #     b = self.b
+    #     output = x + b
+    #
+    #     if self.learn_scale:
+    #         logs = self.logs * self.logscale_factor
+    #         scale = torch.exp(logs) + _scaling_min
+    #         output = output * scale
+    #
+    #         return output.view(input_shape)
+    #     else:
+    #         return output.view(input_shape)
 
     def forward_transform(self, x, logdet=0):
         input_shape = x.size()
@@ -165,13 +165,13 @@ class SequentialFlow(torch.nn.Module):
         super(SequentialFlow, self).__init__()
         self.flows = torch.nn.ModuleList(flows)
 
-    def forward(self, x, context=None):
-        for flow in self.flows:
-            if isinstance(flow, cpflows.DeepConvexFlow) or isinstance(flow, NAFDSF):
-                x = flow.forward(x, context=context)
-            else:
-                x = flow.forward(x)
-        return x
+    # def forward(self, x, context=None):
+    #     for flow in self.flows:
+    #         if isinstance(flow, cpflows.DeepConvexFlow) or isinstance(flow, NAFDSF):
+    #             x = flow.forward(x, context=context)
+    #         else:
+    #             x = flow.forward(x)
+    #     return x
 
     def forward_transform(self, x, logdet=0, context=None, extra=None):
         for flow in self.flows:

@@ -156,11 +156,11 @@ class TransformedCPFlowDistribution(TransformedDistribution):
     def __init__(self, base_distribution: CPFlowDistribution,
             transforms: List[AffineTransform], validate_args=None,
     ) -> None:
-        # super().__init__(
-        #     base_distribution, transforms, validate_args=validate_args
-        # )
-        self.base_dist = base_distribution
-        self.transforms = transforms
+        super().__init__(
+            base_distribution, transforms, validate_args=validate_args
+        )
+        # self.base_dist = base_distribution
+        # self.transforms = transforms
 
     def log_prob(self, y: torch.Tensor) -> torch.Tensor:
         dimension = self.base_dist.prediction_length
