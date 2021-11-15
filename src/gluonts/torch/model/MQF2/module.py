@@ -22,7 +22,7 @@ from gluonts.torch.model.deepar.module import DeepARModel, LaggedLSTM
 
 from gluonts.torch.modules.distribution_output import DistributionOutput
 from gluonts.torch.distributions.MQF2Output import MQF2DistributionOutput
-from .icnn_utils import ActNorm, SequentialFlow, DeepConvexFlow, PICNN, CPFlow, SequentialCPFlow
+from .icnn_utils import ActNorm, SequentialFlow, DeepConvexNet, PICNN, MQF2Net
 
 class MultivariateDeepARModel(DeepARModel):
     @validated()
@@ -71,22 +71,26 @@ class MultivariateDeepARModel(DeepARModel):
         self.threshold_input = threshold_input
         self.es_num_samples = es_num_samples
 
-        icnn = PICNN(dim=self.prediction_length, dimh=icnn_hidden_size, dimc=hidden_size, num_hidden_layers=icnn_num_layers, symm_act_first=True,
+        # icnn = PICNN(dim=self.prediction_length, dimh=icnn_hidden_size, dimc=hidden_size, num_hidden_layers=icnn_num_layers, symm_act_first=True,
+        #              softplus_type='gaussian_softplus',
+        #              zero_softplus=True, is_energy_score=is_energy_score)
+        icnn = PICNN(dim=self.prediction_length, dimh=icnn_hidden_size, dimc=hidden_size,
+                     num_hidden_layers=icnn_num_layers, symm_act_first=True,
                      softplus_type='gaussian_softplus',
-                     zero_softplus=True, is_energy_score=is_energy_score)
+                     zero_softplus=True)
 
         # convexflow = DeepConvexFlow(icnn, self.prediction_length, unbiased=False, no_identity_term=is_energy_score)
-        convexflow = CPFlow(icnn, self.prediction_length, unbiased=False, is_energy_score=is_energy_score, estimate_logdet=estimate_logdet)
+        convexnet = DeepConvexNet(icnn, self.prediction_length, unbiased=False, is_energy_score=is_energy_score, estimate_logdet=estimate_logdet)
 
         if is_energy_score:
-            layers = [convexflow]
+            layers = [convexnet]
         else:
             layers = [ActNorm(self.prediction_length),
-                      convexflow,
+                      convexnet,
                       ActNorm(self.prediction_length),
             ]
 
-        self.flow = SequentialCPFlow(layers)
+        self.flow = MQF2Net(layers)
 
     def unroll_lagged_rnn(
             self,
@@ -102,7 +106,9 @@ class MultivariateDeepARModel(DeepARModel):
         torch.Tensor,
     ]:
 
-        _, scale, output, _, _ = super().unroll_lagged_rnn(feat_static_cat=feat_static_cat,
+        flow = self.flow
+
+        _, scale, hidden_state, _, _ = super().unroll_lagged_rnn(feat_static_cat=feat_static_cat,
         feat_static_real=feat_static_real,
         past_time_feat=past_time_feat,
         past_target=past_target,
@@ -110,21 +116,24 @@ class MultivariateDeepARModel(DeepARModel):
         future_time_feat=future_time_feat,
         future_target=future_target)
 
-        params = (self.flow, output[:, :self.context_length])
+        hidden_state = hidden_state[:, :self.context_length]
 
-        return params, scale
+        # params = (self.flow, output[:, :self.context_length])
+
+        return flow, hidden_state, scale
 
     @torch.jit.ignore
     def output_distribution(
-            self, params, scale=None, inference=False,
+            self, flow, hidden_state, scale=None, inference=False,
     ) -> torch.distributions.Distribution:
-        sliced_params = list(params)
+        # sliced_params = list(params)
         if inference:
-            sliced_params = [params[0]] + [p[:, -1] for p in params[1:]]
+            hidden_state = hidden_state[:, -1]
+            # sliced_params = [params[0]] + [p[:, -1] for p in params[1:]]
 
         # sliced_params = sliced_params + [self.prediction_length, self.threshold_input, self.es_num_samples]
 
-        return self.distr_output.distribution(*sliced_params, scale=scale)
+        return self.distr_output.distribution(flow, hidden_state, scale=scale)
 
     def forward(
             self,
@@ -139,7 +148,7 @@ class MultivariateDeepARModel(DeepARModel):
         if num_parallel_samples is None:
             num_parallel_samples = self.num_parallel_samples
 
-        params, scale = self.unroll_lagged_rnn(
+        flow, hidden_state, scale = self.unroll_lagged_rnn(
             feat_static_cat,
             feat_static_real,
             past_time_feat,
@@ -148,7 +157,7 @@ class MultivariateDeepARModel(DeepARModel):
             future_time_feat[:, :1],
         )
 
-        distr = self.output_distribution(params, inference=True)
+        distr = self.output_distribution(flow, hidden_state, inference=True)
 
         unscaled_future_samples = distr.sample(sample_shape=(self.num_parallel_samples,))
 

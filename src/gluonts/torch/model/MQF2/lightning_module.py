@@ -46,7 +46,7 @@ class MultivariateDeepARLightningModule(DeepARLightningModule):
 
         # prediction_length = self.prediction_length
 
-        params, scale = self.model.unroll_lagged_rnn(
+        flow, hidden_state, scale = self.model.unroll_lagged_rnn(
             feat_static_cat,
             feat_static_real,
             past_time_feat,
@@ -56,7 +56,7 @@ class MultivariateDeepARLightningModule(DeepARLightningModule):
             future_target,
         )
 
-        distr = self.model.output_distribution(params, scale)
+        distr = self.model.output_distribution(flow, hidden_state, scale)
 
         context_target = past_target[:, -self.model.context_length + 1:]
         target = torch.cat(
