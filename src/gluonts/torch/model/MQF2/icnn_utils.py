@@ -1,16 +1,3 @@
-# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
-# You may not use this file except in compliance with the License.
-# A copy of the License is located at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# or in the "license" file accompanying this file. This file is distributed
-# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
-# express or implied. See the License for the specific language governing
-# permissions and limitations under the License.
-
 # MIT License
 #
 # Copyright (c) 2021 Chin-Wei Huang
@@ -33,9 +20,9 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from icnn_lib.flows import SequentialFlow, DeepConvexFlow, ActNorm
-from icnn_lib.icnn import PICNN as ConvexNet
-from icnn_lib.icnn import softplus
+from CPFlow.flows import SequentialFlow, DeepConvexFlow, ActNorm
+from CPFlow.icnn import PICNN as ConvexNet
+from CPFlow.icnn import softplus
 import torch
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
