@@ -1,141 +1,69 @@
+# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License").
+# You may not use this file except in compliance with the License.
+# A copy of the License is located at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# or in the "license" file accompanying this file. This file is distributed
+# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+# express or implied. See the License for the specific language governing
+# permissions and limitations under the License.
+
 from icnn_lib.flows import SequentialFlow, DeepConvexFlow, ActNorm
-from icnn_lib.icnn import (
-    PosLinear,
-    PosLinear2,
-    PICNNAbstractClass,
-    PICNN,
-    ActNormNoLogdet,
-    Softplus,
-    symm_softplus,
-    softplus,
-)
-import numpy as np
+from icnn_lib.icnn import PICNN as ConvexNet
+from icnn_lib.icnn import softplus
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.utils.spectral_norm as spectral_norm
 from torch.distributions.normal import Normal
 
-# class PICNN(PICNNAbstractClass):
-#     def __init__(self, dim=2, dimh=16, dimc=2, num_hidden_layers=2, PosLin=PosLinear,
-#                  symm_act_first=False, softplus_type='gaussian_softplus', zero_softplus=False,
-#                  is_energy_score=True):
-#         super(PICNN, self).__init__()
-#         # with data dependent init
-#
-#         self.act = Softplus(softplus_type=softplus_type, zero_softplus=zero_softplus)
-#         self.act_c = nn.ELU()
-#         self.symm_act_first = symm_act_first
-#         weight_transform = nn.Identity() if is_energy_score else spectral_norm
-#
-#         # data path
-#         Wzs = list()
-#         Wzs.append(weight_transform(nn.Linear(dim, dimh)))
-#         for _ in range(num_hidden_layers - 1):
-#             Wzs.append(PosLin(dimh, dimh, bias=True))
-#         Wzs.append(PosLin(dimh, 1, bias=False))
-#         self.Wzs = torch.nn.ModuleList(Wzs)
-#
-#         # skip data
-#         Wxs = list()
-#         for _ in range(num_hidden_layers - 1):
-#             Wxs.append(weight_transform(nn.Linear(dim, dimh)))
-#         Wxs.append(weight_transform(nn.Linear(dim, 1, bias=False)))
-#         self.Wxs = torch.nn.ModuleList(Wxs)
-#
-#         # context path
-#         Wcs = list()
-#         Wcs.append(weight_transform(nn.Linear(dimc, dimh)))
-#         self.Wcs = torch.nn.ModuleList(Wcs)
-#
-#         Wczs = list()
-#         for _ in range(num_hidden_layers - 1):
-#             Wczs.append(weight_transform(nn.Linear(dimh, dimh)))
-#         Wczs.append(weight_transform(nn.Linear(dimh, dimh, bias=True)))
-#         self.Wczs = torch.nn.ModuleList(Wczs)
-#
-#         Wcxs = list()
-#         for _ in range(num_hidden_layers - 1):
-#             Wcxs.append(weight_transform(nn.Linear(dimh, dim)))
-#         Wcxs.append(weight_transform(nn.Linear(dimh, dim, bias=True)))
-#         self.Wcxs = torch.nn.ModuleList(Wcxs)
-#
-#         Wccs = list()
-#         for _ in range(num_hidden_layers - 1):
-#             Wccs.append(weight_transform(nn.Linear(dimh, dimh)))
-#         self.Wccs = torch.nn.ModuleList(Wccs)
-#
-#         # self.actnorm0 = ActNormNoLogdet(dimh)
-#         # actnorms = list()
-#         # for _ in range(num_hidden_layers - 1):
-#         #     actnorms.append(ActNormNoLogdet(dimh))
-#         # actnorms.append(ActNormNoLogdet(1))
-#         # self.actnorms = torch.nn.ModuleList(actnorms)
-#         #
-#         # self.actnormc = ActNormNoLogdet(dimh)
-#
-#         self.actnorm0 = nn.Identity() if is_energy_score else ActNormNoLogdet(dimh)
-#         # actnorms = list()
-#         # for _ in range(num_hidden_layers - 1):
-#         #     actnorms.append(ActNormNoLogdet(dimh))
-#
-#         actnorms = (
-#             [nn.Identity() if is_energy_score else ActNormNoLogdet(dimh) for _ in range(num_hidden_layers - 1)]
-#         )
-#
-#         actnorms.append(nn.Identity() if is_energy_score else ActNormNoLogdet(1))
-#         self.actnorms = torch.nn.ModuleList(actnorms)
-#
-#         self.actnormc = nn.Identity() if is_energy_score else ActNormNoLogdet(dimh)
-#
-#     def forward(self, x, c):
-#         if self.symm_act_first:
-#             z = symm_softplus(self.actnorm0(self.Wzs[0](x)), self.act)
-#         else:
-#             z = self.act(self.actnorm0(self.Wzs[0](x)))
-#
-#         c = self.act_c(self.actnormc(self.Wcs[0](c)))
-#         for Wz, Wx, Wcz, Wcx, Wcc, actnorm in zip(
-#                 self.Wzs[1:-1], self.Wxs[:-1],
-#                 self.Wczs[:-1], self.Wcxs[:-1], self.Wccs,
-#                 self.actnorms[:-1]):
-#             cz = softplus(Wcz(c) + np.exp(np.log(1.0) - 1))
-#             cx = Wcx(c) + 1.0
-#             z = self.act(actnorm(Wz(z * cz) + Wx(x * cx) + Wcc(c)))
-#
-#         cz = softplus(self.Wczs[-1](c) + np.log(np.exp(1.0) - 1))
-#         cx = self.Wcxs[-1](c) + 1.0
-#         return self.actnorms[-1](
-#             self.Wzs[-1](z * cz) + self.Wxs[-1](x * cx)
-#         )
-
 class DeepConvexNet(DeepConvexFlow):
-    def __init__(self, icnn, dim, unbiased=False, no_bruteforce=True, m1=10, m2=None, rtol=0.0, atol=1e-3,
-                 bias_w1=0.0, trainable_w0=True, is_energy_score=False, estimate_logdet=False):
-        super().__init__(icnn,
+    r"""
+    Class that takes a partially input convex neural network (picnn) as input and equips it with functions of logdet
+    computation (both estimation and exact computation)
+
+    Parameters
+    ----------
+    picnn
+        A SequentialNet instance of a partially input convex neural network (picnn)
+    dim
+        Dimension of the input
+    is_energy_score
+        Indicates if energy score is used as the objective function
+        If yes, the network is not required to be strictly convex, so we can just use the picnn
+        otherwise, a quadratic term is added to the output of picnn to render it strictly convex
+    m1
+        Dimension of the Krylov subspace of the Lanczos tridiagonalization used in approximating H of logdet(H)
+    m2
+        Iteration number of the conjugate gradient algorithm used to approximate logdet(H)
+    rtol
+        relative tolerance of the conjugate gradient algorithm
+    atol
+        absolute tolerance of the conjugate gradient algorithm
+
+    """
+
+    def __init__(self, picnn, dim, is_energy_score=False, estimate_logdet=False, m1=10, m2=None, rtol=0.0, atol=1e-3):
+        super().__init__(picnn,
                          dim,
-                         unbiased=unbiased,
-                         no_bruteforce=no_bruteforce,
                          m1=m1,
                          m2=m2,
                          rtol=rtol,
-                         atol=atol,
-                         bias_w1=bias_w1,
-                         trainable_w0=trainable_w0,)
+                         atol=atol,)
+
+        self.picnn = self.icnn
         self.is_energy_score = is_energy_score
         self.estimate_logdet = estimate_logdet
 
     def get_potential(self, x, context=None):
         n = x.size(0)
-        if context is None:
-            icnn = self.icnn(x)
-        else:
-            icnn = self.icnn(x, context)
+        picnn = self.picnn(x, context)
 
         if self.is_energy_score:
-            return icnn
+            return picnn
         else:
-            return F.softplus(self.w1) * icnn + F.softplus(self.w0) * (x.view(n, -1) ** 2).sum(1, keepdim=True) / 2
+            return F.softplus(self.w1) * picnn + F.softplus(self.w0) * (x.view(n, -1) ** 2).sum(1, keepdim=True) / 2
 
     def forward_transform(self, x, logdet=0, context=None, extra=None):
         if self.estimate_logdet:
@@ -143,31 +71,97 @@ class DeepConvexNet(DeepConvexFlow):
         else:
             return self.forward_transform_bruteforce(x, logdet, context=context)
 
-class MQF2Net(SequentialFlow):
-    def __init__(self, flows):
-        super().__init__(flows)
-        self.layers = self.flows
+class SequentialNet(SequentialFlow):
+    r"""
+    Class that combines a list of DeepConvexNet and ActNorm
+
+    Parameters
+    ----------
+    networks
+        list of DeepConvexNet and/or ActNorm instances
+
+    """
+
+    def __init__(self, networks):
+        super().__init__(networks)
+        self.networks = self.flows
 
     def forward(self, x, context=None):
-        for layer in self.layers:
-            if isinstance(layer, DeepConvexNet):
-                x = layer.forward(x, context=context)
+        for network in self.networks:
+            if isinstance(network, DeepConvexNet):
+                x = network.forward(x, context=context)
             else:
-                x = layer.forward(x)
+                x = network.forward(x)
         return x
 
-    def energy_score(self, z: torch.Tensor, hidden_state: torch.Tensor, es_num_samples: int = 50, beta: float = 1.0):
-        numel_batch, dimension = z.shape[0], z.shape[1]
-        total_sample_num = es_num_samples * numel_batch
+    def es_sample(self, hidden_state: torch.Tensor, dimension: int):
+        """
+        Auxiliary function for energy score computation
 
-        standard_normal = self.get_standard_normal(hidden_state)
+        It draws samples conditioned on the hidden state
+
+        Parameters
+        ----------
+        hidden_state
+            hidden_state which the samples conditioned on (num_samples, hidden_size)
+        dimension
+            dimension of the input
+
+        Returns
+        -------
+        samples
+            samples drawn (num_samples, dimension)
+        """
+
+        num_samples = hidden_state.shape[0]
+
+        zero = torch.tensor(0,
+                            dtype=hidden_state.dtype,
+                            device=hidden_state.device)
+        one = torch.ones_like(zero)
+        standard_normal = Normal(zero, one)
+
+        samples = self.forward(
+            standard_normal.sample([num_samples*dimension]).view(num_samples,dimension),
+            context=hidden_state
+        )
+
+        return samples
+
+    def energy_score(self, z: torch.Tensor, hidden_state: torch.Tensor, es_num_samples: int = 50, beta: float = 1.0):
+        """
+        Computes the (approximated) energy score \sum_i ES(g,z_i),
+        where ES(g,z_i) =
+        -1/(2*es_num_samples^2) * \sum_{X,X'} ||X-X'||_2^beta + 1/es_num_samples *\sum_{X''} ||X''-z_i||_2^beta,
+        X's are samples drawn from the quantile function g(\cdot, h_i) (gradient of picnn),
+        h_i is the hidden state associated with z_i,
+        and es_num_samples is the number of samples drawn for each of X, X', X'' in energy score approximation
+
+        Parameters
+        ----------
+        z
+            Observations (numel_batch, dimension)
+        hidden_state
+            Hidden state (numel_batch, hidden_size)
+        es_num_samples
+            Number of samples drawn for each of X, X', X'' in energy score approximation
+        beta
+            Hyperparameter of the energy score, see the formula above
+        Returns
+        -------
+        loss
+            energy score (numel_batch)
+        """
+
+        numel_batch, dimension = z.shape[0], z.shape[1]
+        total_num_samples = es_num_samples * numel_batch
 
         z_repeat = z.repeat_interleave(repeats=es_num_samples, dim=0)
         hidden_state_repeat = hidden_state.repeat_interleave(repeats=es_num_samples, dim=0)
 
-        X = self.forward(standard_normal.sample([total_sample_num*dimension]).view(total_sample_num,dimension), context=hidden_state_repeat)
-        X_prime = self.forward(standard_normal.sample([total_sample_num*dimension]).view(total_sample_num,dimension), context=hidden_state_repeat)
-        X_bar = self.forward(standard_normal.sample([total_sample_num*dimension]).view(total_sample_num,dimension), context=hidden_state_repeat)
+        X = self.es_sample(hidden_state_repeat, dimension)
+        X_prime = self.es_sample(hidden_state_repeat, dimension)
+        X_bar = self.es_sample(hidden_state_repeat, dimension)
 
         first_term = torch.norm(
             X.view(numel_batch, 1, es_num_samples, dimension)
@@ -186,11 +180,3 @@ class MQF2Net(SequentialFlow):
         loss = -0.5 * mean_first_term + mean_second_term
 
         return loss
-
-    def get_standard_normal(self, hidden_state: torch.Tensor):
-        zero = torch.tensor(0,
-                            dtype=hidden_state.dtype,
-                            device=hidden_state.device)
-        one = torch.ones_like(zero)
-        return Normal(zero, one)
-    # def energy_score(self, z, ):

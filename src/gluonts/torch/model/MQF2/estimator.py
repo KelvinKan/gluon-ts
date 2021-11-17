@@ -11,21 +11,88 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-from typing import List, Optional, Iterable, Dict, Any
+from typing import List, Optional, Dict, Any
 from gluonts.torch.model.deepar.estimator import DeepAREstimator
-from gluonts.torch.model.MQF2.lightning_module import MultivariateDeepARLightningModule
-from gluonts.torch.model.MQF2.module import MultivariateDeepARModel
+from gluonts.torch.model.MQF2.lightning_module import MQF2MultiHorizonLightningModule
+from gluonts.torch.model.MQF2.module import MQF2MultiHorizonModel
 
 from gluonts.core.component import validated
-from gluonts.torch.modules.loss import DistributionLoss, NegativeLogLikelihood, EnergyScore
-
-from gluonts.torch.modules.distribution_output import DistributionOutput
+from gluonts.torch.modules.loss import NegativeLogLikelihood, EnergyScore
 
 from gluonts.torch.distributions.MQF2Output import MQF2DistributionOutput
 
 from gluonts.time_feature import TimeFeature
 
-class MultivariateDeepAREstimator(DeepAREstimator):
+class MQF2MultiHorizonEstimator(DeepAREstimator):
+    r"""
+    Estimator class for the model MQF2 proposed in the paper
+    ``Multivariate Quantile Function Forecaster``
+    by Kan, Aubet, Januschowski, Park, Benidis, Ruthotto, Gasthaus
+
+    This is the multi-horizon (multivariate in time step) variant of MQF2
+
+    This class is based on gluonts.torch.model.deepar.estimator.DeepAREstimator
+
+    Parameters
+    ----------
+    freq
+        Frequency of the data to train on and predict
+    prediction_length
+        Length of the prediction horizon
+    context_length
+        Number of steps to unroll the RNN for before computing predictions
+        (default: None, in which case context_length = prediction_length)
+    num_layers
+        Number of RNN layers
+    hidden_size
+        Hidden state size of RNN
+    dropout_rate
+        Dropout regularization parameter
+    num_feat_dynamic_real
+        Number of dynamic real-valued features
+    num_feat_static_cat
+        Number of static categorial features
+    num_feat_static_real
+        Number of static real-valued features
+    cardinality
+        Number of values of each categorical feature
+    embedding_dimension
+        Dimension of the embeddings for categorical features
+    scaling
+        Whether to automatically scale the target values (default: true)
+    lags_seq
+        Indices of the lagged target values to use as inputs of the RNN
+        (default: None, in which case these are automatically determined
+        based on freq)
+    time_features
+        Time features to use as inputs of the RNN (default: None, in which
+        case these are automatically determined based on freq)
+    num_parallel_samples
+        Number of evaluation samples per time series to increase parallelism
+        during inference. This is a model optimization that does not affect
+        the accuracy (default: 100)
+    icnn_hidden_size
+        Hidden layer size of the input convex neural network (icnn)
+    icnn_num_layers
+        Number of layers of the input convex neural network (icnn)
+    is_energy_score
+        If True, use energy score as objective function
+        otherwise use maximum likelihood as objective function (normalizing flows)
+    es_num_samples
+        Number of samples drawn to approximate the energy score
+    beta
+        Hyperparameter of the energy score
+    threshold_input
+        Clamping threshold of the (scaled) input when maximum likelihood is used as objective function
+        this is used to make the forecaster more robust to outliers in training samples
+    estimate_logdet
+        When maximum likelihood is used as the objective function, specify whether to use the logdet estimator
+        introduced in the paper
+        ``Convex potential flows: Universal probability distributions with optimal transport and convex optimization``
+        If True, the logdet estimator (can be numerically unstable) is used
+        otherwise, the logdet is directly computed
+    """
+
     @validated()
     def __init__(
         self,
@@ -49,12 +116,20 @@ class MultivariateDeepAREstimator(DeepAREstimator):
         trainer_kwargs: Optional[Dict[str, Any]] = dict(),
         icnn_hidden_size: int = 64,
         icnn_num_layers: int = 5,
-        is_energy_score=True,
-        threshold_input = 100,
-        es_num_samples = 50,
+        is_energy_score: bool =True,
+        es_num_samples: int = 50,
         beta: float = 1.0,
+        threshold_input: float = 100,
         estimate_logdet: bool = False,
     ) -> None:
+
+        assert (
+                1 <= beta < 2
+        ), "beta should be in [1,2) for energy score to be strictly proper"
+
+        assert (
+                threshold_input > 0
+        ), "clamping threshold for input must be positive"
 
         distr_output = MQF2DistributionOutput(prediction_length=prediction_length,
                                               is_energy_score=is_energy_score,
@@ -88,19 +163,15 @@ class MultivariateDeepAREstimator(DeepAREstimator):
         trainer_kwargs=trainer_kwargs,
     )
 
-        assert (
-            1 <= beta < 2
-        ), "beta should be in [1,2) for energy score to be strictly proper"
-
         self.icnn_num_layers = icnn_num_layers
         self.icnn_hidden_size = icnn_hidden_size
         self.is_energy_score = is_energy_score
-        self.threshold_input = threshold_input
         self.es_num_samples = es_num_samples
+        self.threshold_input = threshold_input
         self.estimate_logdet = estimate_logdet
 
-    def create_lightning_module(self) -> MultivariateDeepARLightningModule:
-        model = MultivariateDeepARModel(
+    def create_lightning_module(self) -> MQF2MultiHorizonLightningModule:
+        model = MQF2MultiHorizonModel(
             freq=self.freq,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
@@ -126,4 +197,4 @@ class MultivariateDeepAREstimator(DeepAREstimator):
             estimate_logdet=self.estimate_logdet,
         )
 
-        return MultivariateDeepARLightningModule(model=model, loss=self.loss)#, prediction_length=self.prediction_length)
+        return MQF2MultiHorizonLightningModule(model=model, loss=self.loss)

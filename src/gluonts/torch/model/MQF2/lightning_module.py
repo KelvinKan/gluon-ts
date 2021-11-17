@@ -11,18 +11,42 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
+from typing import Dict
+
 import torch
 
-from gluonts.torch.modules.loss import DistributionLoss, NegativeLogLikelihood
+from gluonts.torch.modules.loss import DistributionLoss, EnergyScore
 from gluonts.torch.model.deepar.lightning_module import DeepARLightningModule
-from gluonts.torch.model.MQF2.module import MultivariateDeepARModel
+from gluonts.torch.model.MQF2.module import MQF2MultiHorizonModel
 
-class MultivariateDeepARLightningModule(DeepARLightningModule):
+class MQF2MultiHorizonLightningModule(DeepARLightningModule):
+    r"""
+    LightningModule class for the model MQF2 proposed in the paper
+    ``Multivariate Quantile Function Forecaster``
+    by Kan, Aubet, Januschowski, Park, Benidis, Ruthotto, Gasthaus
+
+    This is the multi-horizon (multivariate in time step) variant of MQF2
+
+    This class is based on gluonts.torch.model.deepar.lightning_module.DeepARLightningModule
+
+    Refer to MQF2MultiHorizonEstimator for the description of parameters
+
+    Parameters
+    ----------
+    model
+        An MQF2MultiHorizonModel instance
+    loss
+        Distribution loss
+    lr
+        Learning rate
+    weight_decay
+        weight decay during training
+    """
+
     def __init__(
         self,
-        model: MultivariateDeepARModel,
-        # prediction_length: int,
-        loss: DistributionLoss = NegativeLogLikelihood(),
+        model: MQF2MultiHorizonModel,
+        loss: DistributionLoss = EnergyScore(),
         lr: float = 1e-3,
         weight_decay: float = 1e-8,
     ) -> None:
@@ -32,9 +56,25 @@ class MultivariateDeepARLightningModule(DeepARLightningModule):
             lr=lr,
             weight_decay=weight_decay,
         )
-        # self.prediction_length = prediction_length
 
-    def _compute_loss(self, batch):
+    def _compute_loss(self, batch: Dict[str, torch.Tensor]):
+        """
+        Function to compute loss
+
+        Given time series, unroll the RNN over the context window and pass the hidden states to the forecaster
+        then the loss with respect to the prediction is computed
+
+        Parameters
+        ----------
+        batch
+            Dictionary containing the (past and future) features and target values in a batch
+
+        Returns
+        -------
+        loss
+            mean of the loss values
+        """
+
         feat_static_cat = batch["feat_static_cat"]
         feat_static_real = batch["feat_static_real"]
         past_time_feat = batch["past_time_feat"]
@@ -44,9 +84,9 @@ class MultivariateDeepARLightningModule(DeepARLightningModule):
         past_observed_values = batch["past_observed_values"]
         future_observed_values = batch["future_observed_values"]
 
-        # prediction_length = self.prediction_length
+        picnn = self.model.picnn
 
-        flow, hidden_state, scale = self.model.unroll_lagged_rnn(
+        hidden_state, scale = self.model.unroll_lagged_rnn(
             feat_static_cat,
             feat_static_real,
             past_time_feat,
@@ -56,20 +96,13 @@ class MultivariateDeepARLightningModule(DeepARLightningModule):
             future_target,
         )
 
-        distr = self.model.output_distribution(flow, hidden_state, scale)
+        distr = self.model.output_distribution(picnn, hidden_state, scale)
 
         context_target = past_target[:, -self.model.context_length + 1:]
         target = torch.cat(
             (context_target, future_target),
             dim=1,
         )
-
-        # prediction_length = distr.prediction_length
-
-        # target = target.unfold(dimension=-1, size=prediction_length, step=1)
-        # target = target.reshape(-1, target.shape[-1])
-        # z = z.unfold(dimension=-1, size=prediction_length, step=1)
-        # z = z.reshape(-1, z.shape[-1])
 
         loss_values = self.loss(distr, target)
 
