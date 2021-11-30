@@ -440,6 +440,12 @@ class Evaluator:
                 + torch.mean(torch.norm(X_prime - target_tensor.view(1, prediction_length), dim=-1))
             )
 
+        sum_pred_target = np.sum(pred_target)  # len=1
+        sum_forecast_sample = np.sum(forecast.samples,
+                                     axis=-1)  # len=num_samples
+
+        metrics["sum_CRPS"] = crps_ensemble(sum_pred_target, sum_forecast_sample)
+
         return metrics
 
     def get_aggregate_metrics(
@@ -456,6 +462,7 @@ class Evaluator:
             "MAPE": "mean",
             "sMAPE": "mean",
             "MSIS": "mean",
+            "sum_CRPS": "mean"
         }
         if self.calculate_owa:
             agg_funs["sMAPE_naive2"] = "mean"
@@ -806,3 +813,13 @@ class MultivariateEvaluator(Evaluator):
                     all_agg_metrics[prefix + metric] = value
 
         return all_agg_metrics, all_metrics_per_ts
+
+
+def crps_ensemble(target, samples):
+    samples = np.sort(samples)
+    n = len(samples)
+
+    quantile_level = (np.arange(1, n+1)-0.5)/n
+    indicator = target < samples
+
+    return np.mean((quantile_level - indicator)*(target - samples))
