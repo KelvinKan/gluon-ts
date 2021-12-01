@@ -166,7 +166,8 @@ class Evaluator:
         aggregation_strategy: Callable = aggregate_no_nan,
         ignore_invalid_values: bool = True,
         n_step_ahead: List[int] = None,
-        energy_score = False,
+        energy_score = True,
+        sum_crps = True,
     ) -> None:
         self.quantiles = tuple(map(Quantile.parse, quantiles))
         self.seasonality = seasonality
@@ -179,6 +180,7 @@ class Evaluator:
         self.ignore_invalid_values = ignore_invalid_values
         self.n_step_ahead = n_step_ahead
         self.energy_score = energy_score
+        self.sum_crps = sum_crps
 
     def __call__(
         self,
@@ -440,11 +442,11 @@ class Evaluator:
                 + torch.mean(torch.norm(X_prime - target_tensor.view(1, prediction_length), dim=-1))
             )
 
-        sum_pred_target = np.sum(pred_target)  # len=1
-        sum_forecast_sample = np.sum(forecast.samples,
-                                     axis=-1)  # len=num_samples
-
-        metrics["sum_CRPS"] = crps_ensemble(sum_pred_target, sum_forecast_sample)
+        if self.sum_crps:
+            sum_pred_target = np.sum(pred_target)  # len=1
+            sum_forecast_sample = np.sum(forecast.samples,
+                                         axis=-1)  # len=num_samples
+            metrics["sum_CRPS"] = crps_ensemble(sum_pred_target, sum_forecast_sample)
 
         return metrics
 
@@ -462,7 +464,6 @@ class Evaluator:
             "MAPE": "mean",
             "sMAPE": "mean",
             "MSIS": "mean",
-            "sum_CRPS": "mean"
         }
         if self.calculate_owa:
             agg_funs["sMAPE_naive2"] = "mean"
@@ -483,6 +484,9 @@ class Evaluator:
 
         if self.energy_score:
             agg_funs["energy_score"] = "mean"
+
+        if self.sum_crps:
+            agg_funs["sum_CRPS"] = "mean"
 
         if self.custom_eval_fn is not None:
             for k, (_, agg_type, _) in self.custom_eval_fn.items():
@@ -822,4 +826,4 @@ def crps_ensemble(target, samples):
     quantile_level = (np.arange(1, n+1)-0.5)/n
     indicator = target < samples
 
-    return np.mean((quantile_level - indicator)*(target - samples))
+    return 2*np.mean((quantile_level - indicator)*(target - samples))
