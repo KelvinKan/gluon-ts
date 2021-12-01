@@ -434,7 +434,7 @@ class Evaluator:
             X_bar = samples_tensor[num_expected:num_expected*2]
             X_prime = samples_tensor[num_expected*2:num_expected*3]
 
-            metrics['energy_score'] = (
+            es_score = (
                     -0.5*torch.mean(torch.norm(
                 X.view(num_expected, 1, prediction_length)
                 - X_bar.view(1, num_expected, prediction_length), dim=-1
@@ -442,11 +442,18 @@ class Evaluator:
                 + torch.mean(torch.norm(X_prime - target_tensor.view(1, prediction_length), dim=-1))
             )
 
+            norm_target = torch.norm(target_tensor)
+            if norm_target > 1e-8:
+                metrics['energy_score'] = es_score/norm_target
+
         if self.sum_crps:
             sum_pred_target = np.sum(pred_target)  # len=1
             sum_forecast_sample = np.sum(forecast.samples,
                                          axis=-1)  # len=num_samples
-            metrics["sum_CRPS"] = crps_ensemble(sum_pred_target, sum_forecast_sample)
+
+            sum_score = crps_ensemble(sum_pred_target, sum_forecast_sample)
+            if sum_pred_target > 1e-8:
+                metrics["sum_CRPS"] = sum_score/np.abs(sum_pred_target)
 
         return metrics
 
